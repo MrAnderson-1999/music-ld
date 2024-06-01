@@ -11,18 +11,12 @@
             padding: 0;
             height: 100vh;
             overflow: hidden;
-            background: url('/static/images/background.gif') no-repeat center center fixed;
+            background: url('/static/images/background-still.jpeg') no-repeat center center fixed;
             background-size: cover;
         }
-        .background-static {
-            animation: none;
-        }
         .background-animated {
-            animation: playGif 2s steps(10) infinite;
-        }
-        @keyframes playGif {
-            from { background-position: 0 0; }
-            to { background-position: -1000px 0; }
+            background: url('/static/images/background.gif') no-repeat center center fixed;
+            background-size: cover;
         }
         .container {
             position: absolute;
@@ -68,7 +62,7 @@
     </style>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
-<body class="background-static">
+<body>
     <div class="container">
         <h1>Spotify Playlist Downloader</h1>
         <form id="playlist-form">
@@ -92,7 +86,7 @@
                 success: function (response) {
                     if (response.status === 'Task started!') {
                         var taskId = response.task_id;
-                        $('body').removeClass('background-static').addClass('background-animated');
+                        $('body').addClass('background-animated');
                         checkTaskStatus(taskId);
                     } else {
                         $('#status').html('<p>' + response.status + '</p>');
@@ -119,16 +113,16 @@
                             checkTaskStatus(taskId);
                         }, 2000);
                     } else if (response.state === 'SUCCESS') {
-                        $('body').removeClass('background-animated').addClass('background-static');
+                        $('body').removeClass('background-animated');
                         var downloadLink = '<a href="' + response.result + '" class="btn btn-success">Download your songs</a>';
                         $('#status').html('<p>Download ready: ' + downloadLink + '</p>');
                     } else {
-                        $('body').removeClass('background-animated').addClass('background-static');
+                        $('body').removeClass('background-animated');
                         $('#status').html('<p>Task failed: ' + response.status + '</p>');
                     }
                 },
                 error: function (xhr) {
-                    $('body').removeClass('background-animated').addClass('background-static');
+                    $('body').removeClass('background-animated');
                     $('#status').html('<p>Error: ' + xhr.responseJSON.message + '</p>');
                 }
             });
