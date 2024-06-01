@@ -185,21 +185,25 @@ def download_and_upload_playlist(self, playlist_link):
     try:
         clear_download_folder(DOWNLOAD_FOLDER)
 
+        self.update_state(state='PROGRESS', meta={'status': 'Extracting playlist URI...'})
         playlist_uri = get_playlist_uri(playlist_link)
         tracks_info = get_all_tracks_info(playlist_uri)
 
+        self.update_state(state='PROGRESS', meta={'status': 'Saving tracks information...'})
         with open(OUTPUT_FILE_NAME, "w", encoding="utf-8") as file:
             for info in tracks_info:
                 file.write(f"{info}\n")
 
-        current_task.update_state(state='PROGRESS', meta={'status': 'Downloading songs...'})
+        self.update_state(state='PROGRESS', meta={'status': 'Downloading songs...'})
         download_songs_from_file(OUTPUT_FILE_NAME, DOWNLOAD_FOLDER)
 
         if os.listdir(DOWNLOAD_FOLDER):
             zip_path = os.path.join(DOWNLOAD_FOLDER, "downloads.zip")
+
+            self.update_state(state='PROGRESS', meta={'status': 'Zipping downloaded files...'})
             zip_folder(DOWNLOAD_FOLDER, zip_path)
 
-            current_task.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...'})
+            self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...'})
 
             # Configuring multipart upload
             GB = 1024 ** 3
@@ -207,17 +211,17 @@ def download_and_upload_playlist(self, playlist_link):
 
             s3_client.upload_file(zip_path, S3_BUCKET_NAME, "downloads.zip", Config=config)
 
-            current_task.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...'})
+            self.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...'})
 
             presigned_url = create_presigned_url(S3_BUCKET_NAME, "downloads.zip")
 
-            current_task.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
+            self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
 
             return {'status': 'Task completed!', 'result': presigned_url}
         else:
             return {'status': 'No files downloaded.'}
     except Exception as e:
-        current_task.update_state(state='FAILURE', meta={'status': f'Error: {str(e)}'})
+        self.update_state(state='FAILURE', meta={'status': f'Error: {str(e)}'})
         return {'status': 'Task failed.', 'message': str(e)}
 
 def task_status(task_id):
