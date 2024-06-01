@@ -22,9 +22,13 @@ def create_app():
 
     celery = make_celery(app)
 
-    from app.main import main as main_blueprint
-    app.register_blueprint(main_blueprint)
+    with app.app_context():
+        from app.main import main as main_blueprint
+        app.register_blueprint(main_blueprint)
 
     return app, celery
 
 app, celery = create_app()
+
+# Delayed import to avoid circular import
+from app import tasks
