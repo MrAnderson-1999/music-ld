@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 import boto3
 import zipfile
 from boto3.s3.transfer import TransferConfig
-from botocore.exceptions import NoCredentialsError
+from botocore.exceptions import NoCredentialsError, ClientError
 
 # Load environment variables
 load_dotenv()
@@ -161,7 +161,7 @@ def download_songs_from_file(file_path, download_folder, update_state_func):
             logger.debug(f"Downloading: {song}")
             download_song(song, download_folder)
             downloaded_songs += 1
-            update_state_func(state='PROGRESS', meta={'status': f'Downloading songs... ', 'downloaded': downloaded_songs, 'total': total_songs})
+            update_state_func(state='PROGRESS', meta={'status': f'Downloading songs... ({downloaded_songs}/{total_songs})', 'downloaded': downloaded_songs, 'total': total_songs})
 
 def create_presigned_url(bucket_name, object_name, expiration=3600):
     try:
@@ -190,20 +190,37 @@ def zip_folder(folder_path, zip_path, update_state_func):
                         logger.debug(f"Adding {file_path} as {arcname}")
                         zipf.write(file_path, arcname)
                         zipped_files += 1
-                        update_state_func(state='PROGRESS', meta={'status': f'Zipping files... ({zipped_files}/{total_files})', 'downloaded': zipped_files, 'total': total_files})
+                        update_state_func(state='PROGRESS', meta={'status': f'Zipping files... ({zipped_files}/{total_files})', 'zipped': zipped_files, 'total': total_files})
         logger.info("Folder zipped successfully.")
     except Exception as e:
         logger.error(f"Error zipping folder: {str(e)}")
         raise
 
+def check_s3_object_exists(bucket_name, object_name):
+    try:
+        s3_client.head_object(Bucket=bucket_name, Key=object_name)
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            return False
+        else:
+            raise
+
 @celery.task(bind=True)
 def download_and_upload_playlist(self, playlist_link):
     try:
-        clear_download_folder(DOWNLOAD_FOLDER)
-
         self.update_state(state='PROGRESS', meta={'status': 'Extracting playlist URI...'})
         playlist_uri = get_playlist_uri(playlist_link)
         playlist_name = get_playlist_name(playlist_uri).replace(" ", "_")  # Replacing spaces with underscores
+        s3_object_name = f"{playlist_name}.zip"
+
+        if check_s3_object_exists(S3_BUCKET_NAME, s3_object_name):
+            presigned_url = create_presigned_url(S3_BUCKET_NAME, s3_object_name)
+            self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved from existing object', 'result': presigned_url})
+            return {'status': 'Task completed!', 'result': presigned_url}
+
+        clear_download_folder(DOWNLOAD_FOLDER)
+
         tracks_info = get_all_tracks_info(playlist_uri)
         total_songs = len(tracks_info)
 
@@ -217,18 +234,17 @@ def download_and_upload_playlist(self, playlist_link):
         logger.debug("Song download process completed.")
 
         if os.listdir(DOWNLOAD_FOLDER):
-            zip_path = os.path.join(DOWNLOAD_FOLDER, f"{playlist_name}.zip")
+            zip_path = os.path.join(DOWNLOAD_FOLDER, s3_object_name)
 
-            # self.update_state(state='PROGRESS', meta={'status': 'Zipping downloaded files...', 'downloaded': total_songs, 'total': total_songs})
-            zip_folder(DOWNLOAD_FOLDER, zip_path)
+            self.update_state(state='PROGRESS', meta={'status': 'Zipping downloaded files...', 'downloaded': total_songs, 'total': total_songs})
+            zip_folder(DOWNLOAD_FOLDER, zip_path, self.update_state)
 
             self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...', 'downloaded': total_songs, 'total': total_songs})
-
-            s3_client.upload_file(zip_path, S3_BUCKET_NAME, f"{playlist_name}.zip")
+            s3_client.upload_file(zip_path, S3_BUCKET_NAME, s3_object_name)
+            logger.info(f"File uploaded to S3: {s3_object_name}")
 
             self.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...', 'downloaded': total_songs, 'total': total_songs})
-
-            presigned_url = create_presigned_url(S3_BUCKET_NAME, f"{playlist_name}.zip")
+            presigned_url = create_presigned_url(S3_BUCKET_NAME, s3_object_name)
 
             self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
             
