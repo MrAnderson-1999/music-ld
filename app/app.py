@@ -161,7 +161,7 @@ def download_songs_from_file(file_path, download_folder, update_state_func):
             logger.debug(f"Downloading: {song}")
             download_song(song, download_folder)
             downloaded_songs += 1
-            update_state_func(state='PROGRESS', meta={'status': f'Downloading songs... ({downloaded_songs}/{total_songs})', 'downloaded': downloaded_songs, 'total': total_songs})
+            update_state_func(state='PROGRESS', meta={'status': f'Downloading songs... ', 'downloaded': downloaded_songs, 'total': total_songs})
 
 def create_presigned_url(bucket_name, object_name, expiration=3600):
     try:
@@ -176,9 +176,11 @@ def create_presigned_url(bucket_name, object_name, expiration=3600):
 
     return response
 
-def zip_folder(folder_path, zip_path):
+def zip_folder(folder_path, zip_path, update_state_func):
     logger.info(f"Zipping folder: {folder_path}")
     try:
+        total_files = sum([len(files) for _, _, files in os.walk(folder_path)])
+        zipped_files = 0
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
             for root, dirs, files in os.walk(folder_path):
                 for file in files:
@@ -187,6 +189,8 @@ def zip_folder(folder_path, zip_path):
                         arcname = os.path.relpath(file_path, folder_path)
                         logger.debug(f"Adding {file_path} as {arcname}")
                         zipf.write(file_path, arcname)
+                        zipped_files += 1
+                        update_state_func(state='PROGRESS', meta={'status': f'Zipping files... ({zipped_files}/{total_files})', 'downloaded': zipped_files, 'total': total_files})
         logger.info("Folder zipped successfully.")
     except Exception as e:
         logger.error(f"Error zipping folder: {str(e)}")
@@ -215,7 +219,7 @@ def download_and_upload_playlist(self, playlist_link):
         if os.listdir(DOWNLOAD_FOLDER):
             zip_path = os.path.join(DOWNLOAD_FOLDER, f"{playlist_name}.zip")
 
-            self.update_state(state='PROGRESS', meta={'status': 'Zipping downloaded files...', 'downloaded': total_songs, 'total': total_songs})
+            # self.update_state(state='PROGRESS', meta={'status': 'Zipping downloaded files...', 'downloaded': total_songs, 'total': total_songs})
             zip_folder(DOWNLOAD_FOLDER, zip_path)
 
             self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...', 'downloaded': total_songs, 'total': total_songs})
