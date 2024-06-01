@@ -93,6 +93,7 @@ def get_playlist_uri(playlist_link):
         raise ValueError("Invalid Spotify playlist link")
 
 def get_playlist_name(playlist_uri):
+    logger.debug("Fetching playlist name from Spotify API.")
     playlist = sp.playlist(playlist_uri, fields="name")
     return playlist['name']
 
@@ -163,9 +164,11 @@ def download_songs_from_file(file_path, download_folder, update_state_func):
 
 def create_presigned_url(bucket_name, object_name, expiration=3600):
     try:
+        logger.debug(f"Generating presigned URL for {object_name}")
         response = s3_client.generate_presigned_url('get_object',
                                                     Params={'Bucket': bucket_name, 'Key': object_name},
                                                     ExpiresIn=expiration)
+        logger.debug(f"Presigned URL generated: {response}")
     except Exception as e:
         logger.error(f"Error generating presigned URL: {str(e)}")
         return None
@@ -173,21 +176,22 @@ def create_presigned_url(bucket_name, object_name, expiration=3600):
     return response
 
 def upload_folder_to_s3(folder_path, bucket_name, object_name_prefix):
-    for root, dirs, files in os.walk(folder_path):
-        for filename in files:
-            file_path = os.path.join(root, filename)
-            relative_path = os.path.relpath(file_path, folder_path)
-            s3_path = os.path.join(object_name_prefix, relative_path)
-            try:
+    logger.debug(f"Uploading folder {folder_path} to S3 with prefix {object_name_prefix}")
+    try:
+        for root, dirs, files in os.walk(folder_path):
+            for filename in files:
+                file_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(file_path, folder_path)
+                s3_path = os.path.join(object_name_prefix, relative_path)
                 s3_client.upload_file(file_path, bucket_name, s3_path)
                 logger.info(f"File uploaded to S3: {s3_path}")
-            except NoCredentialsError:
-                logger.error("Credentials not available for S3 upload.")
-                return False
-            except Exception as e:
-                logger.error(f"Error uploading {file_path} to S3: {str(e)}")
-                return False
-    return True
+        return True
+    except NoCredentialsError:
+        logger.error("Credentials not available for S3 upload.")
+        return False
+    except Exception as e:
+        logger.error(f"Error uploading folder to S3: {str(e)}")
+        return False
 
 @celery.task(bind=True)
 def download_and_upload_playlist(self, playlist_link):
@@ -205,7 +209,9 @@ def download_and_upload_playlist(self, playlist_link):
             for info in tracks_info:
                 file.write(f"{info}\n")
 
+        logger.debug("Starting song download process.")
         download_songs_from_file(OUTPUT_FILE_NAME, DOWNLOAD_FOLDER, self.update_state)
+        logger.debug("Song download process completed.")
 
         if os.listdir(DOWNLOAD_FOLDER):
             self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...', 'downloaded': total_songs, 'total': total_songs})
@@ -214,6 +220,8 @@ def download_and_upload_playlist(self, playlist_link):
                 self.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...', 'downloaded': total_songs, 'total': total_songs})
 
                 presigned_url = create_presigned_url(S3_BUCKET_NAME, playlist_name)
+                if presigned_url is None:
+                    raise Exception('Failed to generate presigned URL.')
 
                 self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
                 
@@ -224,6 +232,7 @@ def download_and_upload_playlist(self, playlist_link):
         else:
             raise Exception('No files downloaded.')
     except Exception as e:
+        logger.error(f"Error in task: {str(e)}")
         self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
         return {'status': 'Task failed.', 'message': str(e)}
 
