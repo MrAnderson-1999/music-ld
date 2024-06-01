@@ -6,15 +6,34 @@
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
     <style>
         body {
-            background: linear-gradient(135deg, #ff7e5f, #feb47b);
-            color: white;
             font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+            background: url('/static/images/background.gif') no-repeat center center fixed;
+            background-size: cover;
+        }
+        .background-static {
+            animation: none;
+        }
+        .background-animated {
+            animation: playGif 2s steps(10) infinite;
+        }
+        @keyframes playGif {
+            from { background-position: 0 0; }
+            to { background-position: -1000px 0; }
         }
         .container {
-            margin-top: 5%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             background-color: rgba(0, 0, 0, 0.6);
             padding: 2rem;
             border-radius: 15px;
+            color: white;
+            text-align: center;
         }
         h1 {
             font-size: 2.5rem;
@@ -45,21 +64,12 @@
         #status p {
             font-size: 1.1rem;
             margin-top: 1rem;
-            text-align: center;
-        }
-        .cityscape {
-            position: absolute;
-            bottom: 0;
-            width: 100%;
-            height: 30%;
-            background: url('path-to-your-cityscape-image.png') bottom center no-repeat;
-            background-size: cover;
         }
     </style>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
-<body>
-    <div class="container text-center">
+<body class="background-static">
+    <div class="container">
         <h1>Spotify Playlist Downloader</h1>
         <form id="playlist-form">
             <div class="form-group">
@@ -70,7 +80,6 @@
         </form>
         <div id="status"></div>
     </div>
-    <div class="cityscape"></div>
 
     <script>
         $('#playlist-form').on('submit', function (event) {
@@ -83,6 +92,7 @@
                 success: function (response) {
                     if (response.status === 'Task started!') {
                         var taskId = response.task_id;
+                        $('body').removeClass('background-static').addClass('background-animated');
                         checkTaskStatus(taskId);
                     } else {
                         $('#status').html('<p>' + response.status + '</p>');
@@ -109,13 +119,16 @@
                             checkTaskStatus(taskId);
                         }, 2000);
                     } else if (response.state === 'SUCCESS') {
+                        $('body').removeClass('background-animated').addClass('background-static');
                         var downloadLink = '<a href="' + response.result + '" class="btn btn-success">Download your songs</a>';
                         $('#status').html('<p>Download ready: ' + downloadLink + '</p>');
                     } else {
+                        $('body').removeClass('background-animated').addClass('background-static');
                         $('#status').html('<p>Task failed: ' + response.status + '</p>');
                     }
                 },
                 error: function (xhr) {
+                    $('body').removeClass('background-animated').addClass('background-static');
                     $('#status').html('<p>Error: ' + xhr.responseJSON.message + '</p>');
                 }
             });
