@@ -73,7 +73,7 @@ def get_all_tracks_info(playlist_uri):
             artist_names = ", ".join([artist["name"] for artist in track["track"]["artists"]])
             tracks_info.append(f"{artist_names} - {track_name}")
         if response["next"] is None:
-            break
+            break;
         offset += len(tracks)
     return tracks_info
 
