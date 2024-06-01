@@ -9,6 +9,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import logging
 from logging.handlers import RotatingFileHandler
 import boto3
+import zipfile
 from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import NoCredentialsError
 
@@ -175,23 +176,21 @@ def create_presigned_url(bucket_name, object_name, expiration=3600):
 
     return response
 
-def upload_folder_to_s3(folder_path, bucket_name, object_name_prefix):
-    logger.debug(f"Uploading folder {folder_path} to S3 with prefix {object_name_prefix}")
+def zip_folder(folder_path, zip_path):
+    logger.info(f"Zipping folder: {folder_path}")
     try:
-        for root, dirs, files in os.walk(folder_path):
-            for filename in files:
-                file_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(file_path, folder_path)
-                s3_path = os.path.join(object_name_prefix, relative_path)
-                s3_client.upload_file(file_path, bucket_name, s3_path)
-                logger.info(f"File uploaded to S3: {s3_path}")
-        return True
-    except NoCredentialsError:
-        logger.error("Credentials not available for S3 upload.")
-        return False
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
+            for root, dirs, files in os.walk(folder_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if file_path != zip_path:  # Ensure the zip file itself is not added
+                        arcname = os.path.relpath(file_path, folder_path)
+                        logger.debug(f"Adding {file_path} as {arcname}")
+                        zipf.write(file_path, arcname)
+        logger.info("Folder zipped successfully.")
     except Exception as e:
-        logger.error(f"Error uploading folder to S3: {str(e)}")
-        return False
+        logger.error(f"Error zipping folder: {str(e)}")
+        raise
 
 @celery.task(bind=True)
 def download_and_upload_playlist(self, playlist_link):
@@ -214,21 +213,23 @@ def download_and_upload_playlist(self, playlist_link):
         logger.debug("Song download process completed.")
 
         if os.listdir(DOWNLOAD_FOLDER):
+            zip_path = os.path.join(DOWNLOAD_FOLDER, f"{playlist_name}.zip")
+
+            self.update_state(state='PROGRESS', meta={'status': 'Zipping downloaded files...', 'downloaded': total_songs, 'total': total_songs})
+            zip_folder(DOWNLOAD_FOLDER, zip_path)
+
             self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...', 'downloaded': total_songs, 'total': total_songs})
 
-            if upload_folder_to_s3(DOWNLOAD_FOLDER, S3_BUCKET_NAME, playlist_name):
-                self.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...', 'downloaded': total_songs, 'total': total_songs})
+            s3_client.upload_file(zip_path, S3_BUCKET_NAME, f"{playlist_name}.zip")
 
-                presigned_url = create_presigned_url(S3_BUCKET_NAME, playlist_name)
-                if presigned_url is None:
-                    raise Exception('Failed to generate presigned URL.')
+            self.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...', 'downloaded': total_songs, 'total': total_songs})
 
-                self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
-                
-                clear_download_folder(DOWNLOAD_FOLDER)
-                return {'status': 'Task completed!', 'result': presigned_url}
-            else:
-                raise Exception('Upload to S3 failed.')
+            presigned_url = create_presigned_url(S3_BUCKET_NAME, f"{playlist_name}.zip")
+
+            self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
+            
+            clear_download_folder(DOWNLOAD_FOLDER)
+            return {'status': 'Task completed!', 'result': presigned_url}
         else:
             raise Exception('No files downloaded.')
     except Exception as e:
