@@ -22,7 +22,7 @@ def create_app():
 
     celery = make_celery(app)
 
-    from .main import main as main_blueprint
+    from app.main import main as main_blueprint
     app.register_blueprint(main_blueprint)
 
     return app, celery

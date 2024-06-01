@@ -1,5 +1,5 @@
-from .app import celery
-from .utils import clear_download_folder, get_playlist_uri, get_all_tracks_info, download_songs_from_file, zip_folder, create_presigned_url, logger, s3_client
+from app.app import celery
+from app.utils import clear_download_folder, get_playlist_uri, get_all_tracks_info, download_songs_from_file, zip_folder, create_presigned_url, logger, s3_client
 from boto3.s3.transfer import TransferConfig
 from celery import current_task
 import os
