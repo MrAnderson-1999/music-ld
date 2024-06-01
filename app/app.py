@@ -9,7 +9,6 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import logging
 from logging.handlers import RotatingFileHandler
 import boto3
-import zipfile
 from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import NoCredentialsError
 
@@ -93,6 +92,10 @@ def get_playlist_uri(playlist_link):
     else:
         raise ValueError("Invalid Spotify playlist link")
 
+def get_playlist_name(playlist_uri):
+    playlist = sp.playlist(playlist_uri, fields="name")
+    return playlist['name']
+
 def get_all_tracks_info(playlist_uri):
     logger.debug("Fetching all track information from Spotify playlist.")
     tracks_info = []
@@ -153,23 +156,7 @@ def download_songs_from_file(file_path, download_folder):
             logger.debug(f"Downloading: {song}")
             download_song(song, download_folder)
 
-def zip_folder(folder_path, zip_path):
-    logger.info(f"Zipping folder: {folder_path}")
-    try:
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
-            for root, dirs, files in os.walk(folder_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    if file_path != zip_path:
-                        arcname = os.path.relpath(file_path, folder_path)
-                        logger.debug(f"Adding {file_path} as {arcname}")
-                        zipf.write(file_path, arcname)
-        logger.info("Folder zipped successfully.")
-    except Exception as e:
-        logger.error(f"Error zipping folder: {str(e)}")
-        raise
-
-def create_presigned_url(bucket_name, object_name, expiration=1800):
+def create_presigned_url(bucket_name, object_name, expiration=3600):
     try:
         response = s3_client.generate_presigned_url('get_object',
                                                     Params={'Bucket': bucket_name, 'Key': object_name},
@@ -180,6 +167,23 @@ def create_presigned_url(bucket_name, object_name, expiration=1800):
 
     return response
 
+def upload_folder_to_s3(folder_path, bucket_name, object_name_prefix):
+    for root, dirs, files in os.walk(folder_path):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            relative_path = os.path.relpath(file_path, folder_path)
+            s3_path = os.path.join(object_name_prefix, relative_path)
+            try:
+                s3_client.upload_file(file_path, bucket_name, s3_path)
+                logger.info(f"File uploaded to S3: {s3_path}")
+            except NoCredentialsError:
+                logger.error("Credentials not available for S3 upload.")
+                return False
+            except Exception as e:
+                logger.error(f"Error uploading {file_path} to S3: {str(e)}")
+                return False
+    return True
+
 @celery.task(bind=True)
 def download_and_upload_playlist(self, playlist_link):
     try:
@@ -187,74 +191,72 @@ def download_and_upload_playlist(self, playlist_link):
 
         self.update_state(state='PROGRESS', meta={'status': 'Extracting playlist URI...'})
         playlist_uri = get_playlist_uri(playlist_link)
+        playlist_name = get_playlist_name(playlist_uri).replace(" ", "_")  # Replacing spaces with underscores
         tracks_info = get_all_tracks_info(playlist_uri)
+        total_songs = len(tracks_info)
 
-        self.update_state(state='PROGRESS', meta={'status': 'Saving tracks information...'})
+        self.update_state(state='PROGRESS', meta={'status': 'Saving tracks information...', 'downloaded': 0, 'total': total_songs})
         with open(OUTPUT_FILE_NAME, "w", encoding="utf-8") as file:
             for info in tracks_info:
                 file.write(f"{info}\n")
 
-        self.update_state(state='PROGRESS', meta={'status': 'Downloading songs...'})
-        download_songs_from_file(OUTPUT_FILE_NAME, DOWNLOAD_FOLDER)
+        downloaded_songs = 0
+        for song in tracks_info:
+            download_song(song, DOWNLOAD_FOLDER)
+            downloaded_songs += 1
+            self.update_state(state='PROGRESS', meta={'status': f'Downloading songs... ({downloaded_songs}/{total_songs})', 'downloaded': downloaded_songs, 'total': total_songs})
 
         if os.listdir(DOWNLOAD_FOLDER):
-            zip_path = os.path.join(DOWNLOAD_FOLDER, "downloads.zip")
+            self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...', 'downloaded': total_songs, 'total': total_songs})
 
-            self.update_state(state='PROGRESS', meta={'status': 'Zipping downloaded files...'})
-            zip_folder(DOWNLOAD_FOLDER, zip_path)
+            if upload_folder_to_s3(DOWNLOAD_FOLDER, S3_BUCKET_NAME, playlist_name):
+                self.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...', 'downloaded': total_songs, 'total': total_songs})
 
-            self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...'})
+                presigned_url = create_presigned_url(S3_BUCKET_NAME, playlist_name)
 
-            # Configuring multipart upload
-            GB = 1024 ** 3
-            config = TransferConfig(multipart_threshold=5*GB, max_concurrency=10, use_threads=True)
-
-            s3_client.upload_file(zip_path, S3_BUCKET_NAME, "downloads.zip", Config=config)
-
-            self.update_state(state='PROGRESS', meta={'status': 'Files have been uploaded, preparing the link now...'})
-
-            presigned_url = create_presigned_url(S3_BUCKET_NAME, "downloads.zip")
-
-            self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
-
-            return {'status': 'Task completed!', 'result': presigned_url}
+                self.update_state(state='PROGRESS', meta={'status': 'Link is retrieved', 'result': presigned_url})
+                
+                clear_download_folder(DOWNLOAD_FOLDER)
+                return {'status': 'Task completed!', 'result': presigned_url}
+            else:
+                return {'status': 'Upload to S3 failed.'}
         else:
             return {'status': 'No files downloaded.'}
     except Exception as e:
         self.update_state(state='FAILURE', meta={'status': f'Error: {str(e)}'})
         return {'status': 'Task failed.', 'message': str(e)}
 
-def task_status(task_id):
-    task = download_and_upload_playlist.AsyncResult(task_id)
-    if task.state == 'PENDING':
-        response = {'state': task.state, 'status': 'Pending...'}
-    elif task.state == 'PROGRESS':
-        response = {'state': task.state, 'status': task.info.get('status', ''), 'result': task.info.get('result', '')}
-    elif task.state == 'SUCCESS':
-        response = {'state': task.state, 'status': 'Task completed!', 'result': task.info.get('result', '')}
-    else:
-        response = {'state': task.state, 'status': str(task.info)}
-    return response
-
-main = Blueprint('main', __name__)
-
-@main.route('/', methods=['GET', 'POST'])
+@app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
         playlist_link = request.form['playlist_link']
-        try:
-            task = download_and_upload_playlist.delay(playlist_link)
-            return jsonify({'status': 'Task started!', 'task_id': task.id}), 202
-        except Exception as e:
-            return jsonify({'status': 'Error', 'message': str(e)}), 500
+        task = download_and_upload_playlist.delay(playlist_link)
+        return jsonify({'status': 'Task started!', 'task_id': task.id})
     return render_template('index.html')
 
-@main.route('/status/<task_id>', methods=['GET'])
+@app.route('/status/<task_id>')
 def taskstatus(task_id):
-    response = task_status(task_id)
+    task = download_and_upload_playlist.AsyncResult(task_id)
+    if task.state == 'PENDING':
+        response = {
+            'state': task.state,
+            'status': 'Pending...'
+        }
+    elif task.state != 'FAILURE':
+        response = {
+            'state': task.state,
+            'status': task.info.get('status', ''),
+            'downloaded': task.info.get('downloaded', 0),
+            'total': task.info.get('total', 1)
+        }
+        if 'result' in task.info:
+            response['result'] = task.info['result']
+    else:
+        response = {
+            'state': task.state,
+            'status': str(task.info),
+        }
     return jsonify(response)
 
-app.register_blueprint(main)
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__ == '__main__':
+    app.run(debug=True)

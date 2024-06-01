@@ -47,7 +47,11 @@
                 url: '/status/' + taskId,
                 success: function (response) {
                     if (response.state === 'PENDING' || response.state === 'PROGRESS') {
-                        $('#status').html('<p>' + response.status + '</p>');
+                        let statusText = response.status;
+                        if (response.downloaded !== undefined && response.total !== undefined) {
+                            statusText += ` (${response.downloaded}/${response.total} songs downloaded)`;
+                        }
+                        $('#status').html('<p>' + statusText + '</p>');
                         setTimeout(function () {
                             checkTaskStatus(taskId);
                         }, 2000);
