@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Music Downloader</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>Download Music from Spotify Playlist</h1>
+    <form id="playlist-form">
+        <label for="playlist_link">Spotify Playlist Link:</label>
+        <input type="text" id="playlist_link" name="playlist_link" required>
+        <button type="submit">Download</button>
+    </form>
+    <div id="status"></div>
+    <script>
+        $('#playlist-form').on('submit', function (event) {
+            event.preventDefault();
+            $('#status').html('<p>Processing...</p>');
+            $.ajax({
+                type: 'POST',
+                url: '/',
+                data: $(this).serialize(),
+                success: function (response) {
+                    if (response.status === 'Task started!') {
+                        var taskId = response.task_id;
+                        checkTaskStatus(taskId);
+                    } else {
+                        $('#status').html('<p>' + response.status + '</p>');
+                    }
+                },
+                error: function (xhr) {
+                    $('#status').html('<p>Error: ' + xhr.responseJSON.message + '</p>');
+                }
+            });
+        });
+
+        function checkTaskStatus(taskId) {
+            $.ajax({
+                type: 'GET',
+                url: '/status/' + taskId,
+                success: function (response) {
+                    if (response.state === 'PENDING' || response.state === 'PROGRESS') {
+                        $('#status').html('<p>' + response.status + '</p>');
+                        setTimeout(function () {
+                            checkTaskStatus(taskId);
+                        }, 2000);
+                    } else if (response.state === 'SUCCESS') {
+                        var downloadLink = '<a href="' + response.result + '">Download your songs</a>';
+                        $('#status').html('<p>Download ready: ' + downloadLink + '</p>');
+                    } else {
+                        $('#status').html('<p>Task failed: ' + response.status + '</p>');
+                    }
+                },
+                error: function (xhr) {
+                    $('#status').html('<p>Error: ' + xhr.responseJSON.message + '</p>');
+                }
+            });
+        }
+    </script>
+</body>
+</html>
