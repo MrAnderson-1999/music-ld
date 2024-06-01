@@ -219,11 +219,11 @@ def download_and_upload_playlist(self, playlist_link):
                 clear_download_folder(DOWNLOAD_FOLDER)
                 return {'status': 'Task completed!', 'result': presigned_url}
             else:
-                return {'status': 'Upload to S3 failed.'}
+                raise Exception('Upload to S3 failed.')
         else:
-            return {'status': 'No files downloaded.'}
+            raise Exception('No files downloaded.')
     except Exception as e:
-        self.update_state(state='FAILURE', meta={'status': f'Error: {str(e)}'})
+        self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
         return {'status': 'Task failed.', 'message': str(e)}
 
 @app.route('/', methods=['GET', 'POST'])
@@ -254,7 +254,9 @@ def taskstatus(task_id):
     else:
         response = {
             'state': task.state,
-            'status': str(task.info),
+            'status': task.info.get('status', 'Task failed.'),
+            'exc_type': task.info.get('exc_type', ''),
+            'exc_message': task.info.get('exc_message', '')
         }
     return jsonify(response)
 
