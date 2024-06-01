@@ -1,5 +1,5 @@
 from flask import Blueprint, request, render_template, jsonify
-from app.tasks import download_and_upload_playlist, task_status
+from tasks import download_and_upload_playlist, task_status
 
 main = Blueprint('main', __name__)
 
