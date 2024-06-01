@@ -142,7 +142,7 @@ def download_song(song_title, download_folder):
         except Exception as e:
             logger.error(f"Error downloading {song_title}: {str(e)}")
 
-def download_songs_from_file(file_path, download_folder):
+def download_songs_from_file(file_path, download_folder, update_state_func):
     if not os.path.isfile(file_path):
         logger.error(f"File {file_path} does not exist.")
         return
@@ -150,11 +150,16 @@ def download_songs_from_file(file_path, download_folder):
     with open(file_path, 'r') as file:
         songs = file.readlines()
 
+    total_songs = len(songs)
+    downloaded_songs = 0
+
     for song in songs:
         song = song.strip()
         if song:
             logger.debug(f"Downloading: {song}")
             download_song(song, download_folder)
+            downloaded_songs += 1
+            update_state_func(state='PROGRESS', meta={'status': f'Downloading songs... ({downloaded_songs}/{total_songs})', 'downloaded': downloaded_songs, 'total': total_songs})
 
 def create_presigned_url(bucket_name, object_name, expiration=3600):
     try:
@@ -200,11 +205,7 @@ def download_and_upload_playlist(self, playlist_link):
             for info in tracks_info:
                 file.write(f"{info}\n")
 
-        downloaded_songs = 0
-        for song in tracks_info:
-            download_song(song, DOWNLOAD_FOLDER)
-            downloaded_songs += 1
-            self.update_state(state='PROGRESS', meta={'status': f'Downloading songs... ({downloaded_songs}/{total_songs})', 'downloaded': downloaded_songs, 'total': total_songs})
+        download_songs_from_file(OUTPUT_FILE_NAME, DOWNLOAD_FOLDER, self.update_state)
 
         if os.listdir(DOWNLOAD_FOLDER):
             self.update_state(state='PROGRESS', meta={'status': 'Uploading to S3...', 'downloaded': total_songs, 'total': total_songs})
